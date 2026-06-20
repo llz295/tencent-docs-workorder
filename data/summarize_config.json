@@ -1,0 +1,9 @@
+{
+  "prompt_before_summarize": true,
+  "auto_summarize_after_download": false,
+  "prompt_for_sheet_name": true,
+  "prompt_for_date_ranges": true,
+  "sheet_name": "",
+  "output_filename_prefix": "录音师薪资结算结果",
+  "sample_file_keyword": "贝儿"
+}

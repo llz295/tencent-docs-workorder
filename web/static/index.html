@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>腾讯文档 · 录音师工单自动化</title>
+  <link rel="stylesheet" href="/static/app.css" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand">录音师工单&#10;自动化平台</div>
+      <div class="brand-sub">腾讯文档 POM · 网页版</div>
+      <nav id="sidebar-nav"></nav>
+    </aside>
+
+    <div class="main">
+      <header class="header">
+        <h1 id="page-title">一键执行</h1>
+        <div class="breadcrumb" id="breadcrumb">工作台 / 一键执行</div>
+      </header>
+      <div class="content" id="panels"></div>
+    </div>
+
+    <footer class="statusbar">
+      <span class="status-dot" id="status-dot"></span>
+      <span id="status-text">就绪</span>
+      <span class="status-detail" id="status-detail">等待操作</span>
+    </footer>
+  </div>
+
+  <!-- 汇总确认 -->
+  <div class="modal-overlay" id="modal-confirm">
+    <div class="modal">
+      <h3>确认汇总</h3>
+      <p>是否开始汇总本地工单？</p>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+        <button class="btn" id="confirm-cancel">取消</button>
+        <button class="btn btn-primary" id="confirm-ok">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 工作表选择 -->
+  <div class="modal-overlay" id="modal-sheet">
+    <div class="modal">
+      <h3>选择汇总工作表</h3>
+      <p class="hint" id="sheet-sample-hint"></p>
+      <select id="sheet-select" size="10" style="width:100%;padding:8px"></select>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+        <button class="btn" id="sheet-cancel">取消</button>
+        <button class="btn btn-primary" id="sheet-ok">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 日历时间段 -->
+  <div class="modal-overlay" id="modal-calendar">
+    <div class="modal" style="max-width:820px">
+      <h3>选择汇总时间段</h3>
+      <p class="hint">每段须点选起始日和结束日（闭区间，含首尾）。不添加时间段直接确定 = 仅全量汇总。</p>
+      <div class="cal-grid" id="cal-container"></div>
+      <p class="hint" id="cal-pick-label">当前选择: （未选）</p>
+      <div style="display:flex;gap:8px;margin:8px 0">
+        <button class="btn" id="cal-add">添加时间段</button>
+        <button class="btn" id="cal-clear">清除当前选择</button>
+      </div>
+      <ul class="range-list" id="cal-ranges"></ul>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+        <button class="btn" id="cal-cancel">取消</button>
+        <button class="btn btn-primary" id="cal-ok">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

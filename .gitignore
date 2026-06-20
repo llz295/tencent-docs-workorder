@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/nuitka-out/
+build/temporary*/
+build/**/*.build/
+build/**/*.dist/
+*.spec.bak
+
+# 运行产物
+app.log
+data/session.json
+data/session.json.bak
+data/instance.lock
+*.log
+
+# 浏览器（体积大，打包时自动复制）
+ms-playwright/
+
+# 发布包（上传到 GitHub Releases，不进仓库）
+releases/
+
+# PyInstaller 缓存
+build/tencent_docs/
+nuitka-crash-report.xml
+build/nuitka_build.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# 虚拟环境
+.venv/
+.venv*/
+venv/
+env/
+
+# 保留 upx.exe（项目根目录）
+# !upx.exe

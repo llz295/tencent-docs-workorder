@@ -1,0 +1,18 @@
+{
+  "download_dir": "C:\\Users\\Administrator\\Desktop\\录音师工单",
+  "summarize_output_dir": "C:\\Users\\Administrator\\Desktop",
+  "probe_sheet_url": "https://docs.qq.com/sheet/DTHN5UWdjZmxmWG9P",
+  "retry_round_delay_sec": 3,
+  "login_wait_timeout_sec": 300,
+  "login_poll_interval_sec": 2,
+  "sheet_load_wait_ms": 2000,
+  "editor_ready_timeout_ms": 25000,
+  "menu_ready_timeout_ms": 8000,
+  "sheet_open_max_retries": 1,
+  "probe_wait_sec": 20,
+  "headless": true,
+  "browser_channel": "",
+  "ui_mode": "ask",
+  "web_host": "0.0.0.0",
+  "web_port": 8765
+}
