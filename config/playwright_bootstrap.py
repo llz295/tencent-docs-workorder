@@ -100,17 +100,7 @@ def ensure_chromium_browser(*, interactive: bool = True) -> None:
         "下载完成后会自动继续。"
     )
     if interactive:
-        try:
-            import tkinter as tk
-            from tkinter import messagebox
-
-            root = tk.Tk()
-            root.withdraw()
-            root.attributes("-topmost", True)
-            messagebox.showinfo("正在准备浏览器", msg)
-            root.destroy()
-        except Exception:
-            print(msg)
+        print(msg)
 
     browsers.mkdir(parents=True, exist_ok=True)
     from playwright._impl._driver import compute_driver_executable, get_driver_env

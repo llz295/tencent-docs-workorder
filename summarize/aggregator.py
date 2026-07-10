@@ -26,8 +26,7 @@ from summarize.date_filter import (
     format_range_label,
     period_detail_sheet_name,
 )
-from summarize.date_range_picker import pick_date_ranges
-from summarize.prompt_dialog import confirm_summarize
+
 
 
 def list_downloaded_xlsx(
@@ -183,8 +182,8 @@ class WorkOrderAggregator:
                 status_fn(msg)
 
         if not skip_prompt and self.config.prompt_before_summarize:
-            if not confirm_summarize(enabled=True):
-                raise SystemExit("用户取消汇总")
+            # 网页版/CLI 不走此处（skip_prompt=True），控制台交互在 pipeline.prepare_summarize 中处理
+            print("汇总前确认已在 prepare_summarize 中处理")
 
         _status(f"读取工单目录: {download_dir}")
         all_data, errors = self._load_all_data(download_dir, on_progress=_status)
@@ -192,9 +191,9 @@ class WorkOrderAggregator:
 
         ranges = date_ranges
         if ranges is None and self.config.prompt_for_date_ranges and not skip_date_prompt:
-            ranges = pick_date_ranges()
-            if ranges is None:
-                raise SystemExit("用户取消时间段选择")
+            # 时间段选择不在 aggregator 中进行，由 prepare_summarize 传入
+            print("[!] 时间段选择应在外部完成")
+            ranges = []
         if ranges is None:
             ranges = []
 

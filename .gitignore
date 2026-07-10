@@ -7,6 +7,7 @@ __pycache__/
 *.egg-info/
 .eggs/
 dist/
+releases/
 build/nuitka-out/
 build/temporary*/
 build/**/*.build/
@@ -22,9 +23,6 @@ data/instance.lock
 
 # 浏览器（体积大，打包时自动复制）
 ms-playwright/
-
-# 发布包（上传到 GitHub Releases，不进仓库）
-releases/
 
 # PyInstaller 缓存
 build/tencent_docs/

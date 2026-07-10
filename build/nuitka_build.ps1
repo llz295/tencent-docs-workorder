@@ -1,4 +1,4 @@
-# Nuitka lightweight build (Windows)
+﻿# Nuitka lightweight build (Windows)
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File build\nuitka_build.ps1
 #   powershell -ExecutionPolicy Bypass -File build\nuitka_build.ps1 -Lite
@@ -14,6 +14,14 @@ param(
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
+
+# 使用虚拟环境 Python（所有依赖已安装在此环境中）
+$venvPython = Join-Path $Root ".venv311\Scripts\python.exe"
+if (-not (Test-Path $venvPython)) {
+    Write-Error "虚拟环境 Python 未找到: $venvPython"
+    exit 1
+}
+Write-Host "使用虚拟环境: $venvPython"
 
 $ReleaseDir = Join-Path $Root "releases"
 $DistRoot = Join-Path $Root "dist"
@@ -31,7 +39,7 @@ $distBrowsers = Join-Path $AppDist "ms-playwright"
 $projBrowsers = Join-Path $Root "ms-playwright"
 if (Test-Path $distBrowsers) {
     Write-Host "  preserving ms-playwright from dist -> project ..."
-    & python build\stage_browsers.py --import-from $AppDist 2>$null
+    & $venvPython build\stage_browsers.py --import-from $AppDist 2>$null
     if ($LASTEXITCODE -ne 0) {
         # fallback: simple copy if import helper not used yet
         $revDir = Get-ChildItem $distBrowsers -Directory -ErrorAction SilentlyContinue |
@@ -74,11 +82,11 @@ Get-ChildItem $projBrowsers -Directory -ErrorAction SilentlyContinue |
     }
 
 Write-Host "`n[1/8] Install dependencies"
-python -m pip install -q -r requirements.txt
-python -m pip install -q nuitka ordered-set zstandard certifi
+# 依赖已在虚拟环境中安装好，跳过 pip install
+Write-Host "  依赖已在虚拟环境中安装，跳过 pip install"
 
 # Fix SSL for Nuitka auto-downloads (CERTIFICATE_VERIFY_FAILED)
-$certFile = python -c "import certifi; print(certifi.where())" 2>$null
+$certFile = & $venvPython -c "import certifi; print(certifi.where())" 2>$null
 if ($certFile -and (Test-Path $certFile)) {
     $env:SSL_CERT_FILE = $certFile
     $env:REQUESTS_CA_BUNDLE = $certFile
@@ -86,13 +94,28 @@ if ($certFile -and (Test-Path $certFile)) {
 }
 
 Write-Host "`n[2/8] Prepare vendor/app.py"
-python build\prepare_vendor.py
+& $venvPython build\prepare_vendor.py
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 if (-not $Lite) {
     Write-Host "`n[3/8] Ensure Chromium matches Playwright revision"
-    python build\stage_browsers.py --ensure-project
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    # 检查 ms-playwright 是否已存在且有效，存在则跳过
+    $projBrowsers = Join-Path $Root "ms-playwright"
+    $chromiumDirs = Get-ChildItem $projBrowsers -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '^chromium-\d+$' -and $_.Name -notmatch 'headless_shell' }
+    $browserFound = $false
+    foreach ($dir in $chromiumDirs) {
+        $exe = Join-Path $dir.FullName "chrome-win64\chrome.exe"
+        if (Test-Path $exe) {
+            $browserFound = $true
+            Write-Host "  Chromium 已存在: $($dir.Name)，跳过检查"
+            break
+        }
+    }
+    if (-not $browserFound) {
+        & $venvPython build\stage_browsers.py --ensure-project
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    }
 } else {
     Write-Host "`n[3/8] Lite mode: skip browser install"
 }
@@ -110,8 +133,9 @@ $env:PYTHONPATH = (Join-Path $Root "vendor") + ";" + $Root
 
 $dataDir = Join-Path $Root "data"
 $staticDir = Join-Path $Root "web\static"
+$vendorDir = Join-Path $Root "vendor"
 
-$pyVer = python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"
+$pyVer = & $venvPython -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"
 $useMsvc = $false
 $useMingw = $false
 
@@ -138,7 +162,6 @@ $nuitkaCmd = @(
     "-m", "nuitka",
     "--standalone",
     "--assume-yes-for-downloads",
-    "--enable-plugin=tk-inter",
     "--windows-console-mode=disable",
     "--output-dir=$NuitkaOut",
     "--output-filename=WorkOrderAutomation.exe",
@@ -159,14 +182,12 @@ if ($useMsvc) {
     $nuitkaCmd += "--lto=yes"
 }
 $nuitkaCmd += @(
-    "--include-package=customtkinter",
     "--include-package=playwright",
     "--include-package=pandas",
     "--include-package=openpyxl",
     "--include-package=fastapi",
     "--include-package=uvicorn",
     "--include-package=starlette",
-    "--include-package=ui",
     "--include-package=config",
     "--include-package=auth",
     "--include-package=pages",
@@ -174,9 +195,11 @@ $nuitkaCmd += @(
     "--include-package=core",
     "--include-package=summarize",
     "--include-package=web",
+    "--include-package=vendor",
     "--include-module=app",
     "--include-data-dir=$dataDir=data",
     "--include-data-dir=$staticDir=web\static",
+    "--include-data-dir=$vendorDir=vendor",
     "--nofollow-import-to=matplotlib",
     "--nofollow-import-to=IPython",
     "--nofollow-import-to=jupyter",
@@ -197,7 +220,7 @@ $nuitkaCmd += @(
     "run.py"
 )
 
-python @nuitkaCmd
+& $venvPython @nuitkaCmd
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host ""
@@ -233,18 +256,58 @@ if ($Lite) {
     if (Test-Path $bp) { Remove-Item $bp -Recurse -Force }
 } else {
     Write-Host "`n[6/8] Copy Chromium to ms-playwright"
-    python build\stage_browsers.py $AppDist
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    # 检查项目目录中的 ms-playwright 是否已存在
+    $projBrowsers = Join-Path $Root "ms-playwright"
+    $chromiumDirs = Get-ChildItem $projBrowsers -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '^chromium-\d+$' -and $_.Name -notmatch 'headless_shell' }
+    $browserFound = $false
+    foreach ($dir in $chromiumDirs) {
+        $exe = Join-Path $dir.FullName "chrome-win64\chrome.exe"
+        if (Test-Path $exe) {
+            $browserFound = $true
+            Write-Host "  Chromium 已存在: $($dir.Name)，直接复制到 dist"
+            # 直接复制到 dist
+            $distBrowsers = Join-Path $AppDist "ms-playwright"
+            if (Test-Path $distBrowsers) { Remove-Item $distBrowsers -Recurse -Force }
+            New-Item -ItemType Directory -Path $distBrowsers -Force | Out-Null
+            Copy-Item -Path $dir.FullName -Destination (Join-Path $distBrowsers $dir.Name) -Recurse -Force
+            # 复制 .links 目录
+            $links = Join-Path $projBrowsers ".links"
+            if (Test-Path $links) {
+                Copy-Item -Path $links -Destination (Join-Path $distBrowsers ".links") -Recurse -Force
+            }
+            break
+        }
+    }
+    if (-not $browserFound) {
+        & $venvPython build\stage_browsers.py $AppDist
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    }
 }
+
+Write-Host "`n[7/9] Copy VC++ runtime DLLs"
+$vcDlls = @("msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll", "concrt140.dll")
+$sys32 = "$env:SystemRoot\System32"
+foreach ($dll in $vcDlls) {
+    $src = Join-Path $sys32 $dll
+    $dst = Join-Path $AppDist $dll
+    if (Test-Path $src) {
+        Copy-Item -Path $src -Destination $dst -Force
+        Write-Host "  $dll copied"
+    } else {
+        Write-Warning "$dll not found in System32!"
+    }
+}
+Write-Host "  OK"
 
 if (-not $SkipUpx) {
-    Write-Host "`n[7/8] UPX compress"
+    Write-Host "`n[8/9] UPX compress"
     powershell -ExecutionPolicy Bypass -File build\apply_upx.ps1 -TargetDir $AppDist
 } else {
-    Write-Host "`n[7/8] Skip UPX"
+    Write-Host "`n[8/9] Skip UPX"
 }
 
-Write-Host "`n[8/8] Create release zip"
+Write-Host "`n[9/9] Create release zip"
 $Readme = Join-Path $AppDist "README-win.txt"
 $browserLine = if ($Lite) { "Lite: Chromium downloads on first run (internet required)." } else { "Includes ms-playwright Chromium (~400MB)." }
 @(

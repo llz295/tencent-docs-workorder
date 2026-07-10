@@ -41,6 +41,10 @@ def chromium_ready(browsers_dir: Path) -> bool:
         return False
     if revision and f"chromium-{revision}" not in str(exe):
         return False
+    # 当 revision 为 None 时（如中文路径导致 browsers.json 不可达），
+    # 只要有 chrome.exe 即视为就绪
+    if not revision and chromium_installed(browsers_dir):
+        return True
     return True
 
 

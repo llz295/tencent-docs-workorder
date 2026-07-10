@@ -30,14 +30,13 @@ if _pw_driver.is_dir():
 binaries = []
 hiddenimports = (
     collect_submodules("playwright")
-    + collect_submodules("customtkinter")
-    + collect_submodules("ui")
     + collect_submodules("summarize")
     + collect_submodules("config")
     + collect_submodules("auth")
     + collect_submodules("pages")
     + collect_submodules("services")
     + collect_submodules("core")
+    + collect_submodules("web")
 )
 hiddenimports += [
     "playwright._impl._api_structures",
@@ -50,11 +49,6 @@ hiddenimports += [
     "config.voice_actor_pricing",
     "config.playwright_bootstrap",
 ]
-
-tmp = collect_all("customtkinter")
-datas += tmp[0]
-binaries += tmp[1]
-hiddenimports += tmp[2]
 
 a = Analysis(
     [str(POM_DIR / "run.py")],

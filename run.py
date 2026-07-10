@@ -1,12 +1,10 @@
 """
 腾讯文档 · 录音师工单自动化 — 唯一入口
 
-默认启动图形界面；带命令行参数时走 CLI（兼容原 main.py / summarize_main.py）。
+默认启动网页版（可局域网访问）；带命令行参数时走 CLI。
 
 用法:
-    python run.py                    # 选择桌面/网页版后启动
-    python run.py --web              # 强制网页版
-    python run.py --gui              # 强制桌面 GUI
+    python run.py                    # 启动网页版（默认）
     python run.py download           # 仅下载（CLI）
     python run.py summarize          # 仅汇总
     python run.py all                # 下载并汇总
@@ -30,6 +28,7 @@ apply_frozen_env()
 
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="腾讯文档录音师工单自动化")
+    p.add_argument("--web", action="store_true", help="启动网页版（等同于无参数运行）")
     sub = p.add_subparsers(dest="command")
 
     dl = sub.add_parser("download", help="批量下载工单")
@@ -45,8 +44,6 @@ def _build_parser() -> argparse.ArgumentParser:
     both.add_argument("-w", "--workers", type=int, default=None)
     both.add_argument("-y", "--yes", action="store_true")
 
-    p.add_argument("--gui", action="store_true", help="强制打开桌面 GUI")
-    p.add_argument("--web", action="store_true", help="强制打开网页版")
     return p
 
 
@@ -81,52 +78,31 @@ def _run_cli(args: argparse.Namespace) -> int:
     return 1
 
 
-def _show_lock_error(message: str) -> None:
-    print(message, file=sys.stderr)
-    try:
-        import tkinter as tk
-        from tkinter import messagebox
-
-        root = tk.Tk()
-        root.withdraw()
-        root.attributes("-topmost", True)
-        messagebox.showerror("无法启动", message)
-        root.destroy()
-    except Exception:
-        pass
-
-
-def _launch_ui(*, force_desktop: bool = False, force_web: bool = False) -> int:
+def _launch_web(mode: str = "web") -> int:
+    """启动网页版（包含 InstanceLock 保护）。"""
     from config.app_config import AppConfig
     from config.instance_lock import InstanceLock
-    from config.launch_selector import resolve_launch_mode
 
     cfg = AppConfig.load()
-    if force_web:
-        mode = "web"
-    elif force_desktop:
-        mode = "desktop"
-    else:
-        mode = resolve_launch_mode(cfg)
-        cfg = AppConfig.load()
-
     lock = InstanceLock(mode)
     try:
         lock.acquire()
     except RuntimeError as exc:
-        _show_lock_error(str(exc))
+        print(f"错误: {exc}", file=sys.stderr)
+        print("请先关闭已运行的实例后再启动。", file=sys.stderr)
         return 1
 
-    if mode == "web":
+    try:
         from web.server import run_web_server
 
         run_web_server(host=cfg.web_host, port=cfg.web_port)
         return 0
-
-    from ui.main_window import launch
-
-    launch()
-    return 0
+    finally:
+        # 确保锁被释放
+        try:
+            lock.release()
+        except Exception:
+            pass
 
 
 def main() -> int:
@@ -135,21 +111,21 @@ def main() -> int:
     argv = sys.argv[1:]
 
     if not argv:
-        return _launch_ui()
-
-    if argv == ["--gui"] or (len(argv) == 1 and argv[0] in ("gui", "--gui")):
-        return _launch_ui(force_desktop=True)
+        # 无参数时默认启动网页版
+        return _launch_web()
 
     if argv == ["--web"] or (len(argv) == 1 and argv[0] in ("web", "--web")):
-        return _launch_ui(force_web=True)
+        return _launch_web()
 
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    if args.web:
-        return _launch_ui(force_web=True)
-    if args.gui or args.command is None:
-        return _launch_ui(force_desktop=True)
+    if getattr(args, "web", False):
+        return _launch_web()
+
+    if args.command is None:
+        return _launch_web()
+
     return _run_cli(args)
 
 

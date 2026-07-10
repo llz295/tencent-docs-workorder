@@ -18,14 +18,14 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from config.app_config import AppConfig
+from config.config_registry import all_config_files
 from config.download_settings import DownloadConfig
+from config.menu_schema import APP_MENU
 from config.settings import DOC_URLS_PATH, apply_app_config
 from config.summarize_settings import SummarizeConfig
 from config.voice_actor_pricing import load_config as load_pricing_config
 from config.voice_actor_pricing import save_config as save_pricing_config
 from config.voice_actor_pricing import validate_config as validate_pricing_config
-from ui.config_registry import all_config_files
-from ui.menu_schema import APP_MENU
 
 
 def _resolve_static_dir() -> Path:
@@ -198,6 +198,40 @@ class TaskRunner:
         return lines
 
 
+# SSE 活跃客户端跟踪（用来判断所有浏览器标签页是否都已关闭）
+_active_sse_clients = 0
+_sse_clients_lock = threading.Lock()
+_shutdown_event = None  # asyncio.Event，由 run_web_server 创建
+_shutdown_timer: Optional[threading.Timer] = None
+_GRACE_PERIOD_SEC = 3  # 所有客户端断开后等待 3 秒再退出
+
+
+def _inc_sse_clients() -> None:
+    global _active_sse_clients, _shutdown_timer
+    with _sse_clients_lock:
+        _active_sse_clients += 1
+        # 有客户端连接，取消待执行的退出定时器
+        if _shutdown_timer is not None:
+            _shutdown_timer.cancel()
+            _shutdown_timer = None
+
+
+def _dec_sse_clients() -> None:
+    global _active_sse_clients, _shutdown_timer
+    should_shutdown = False
+    with _sse_clients_lock:
+        _active_sse_clients -= 1
+        if _active_sse_clients <= 0 and _shutdown_event is not None:
+            # 所有客户端都断开了，启动一个定时器等待优雅关闭
+            if _shutdown_timer is None:
+                def _do_shutdown() -> None:
+                    if _shutdown_event is not None:
+                        _shutdown_event.set()
+                _shutdown_timer = threading.Timer(_GRACE_PERIOD_SEC, _do_shutdown)
+                _shutdown_timer.daemon = True
+                _shutdown_timer.start()
+
+
 runner = TaskRunner()
 web_app = FastAPI(title="录音师工单自动化")
 app = web_app
@@ -206,6 +240,14 @@ app = web_app
 @web_app.get("/")
 async def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@web_app.on_event("shutdown")
+async def _cleanup_shutdown_timer() -> None:
+    global _shutdown_timer
+    if _shutdown_timer is not None:
+        _shutdown_timer.cancel()
+        _shutdown_timer = None
 
 
 @web_app.get("/api/menu")
@@ -238,13 +280,17 @@ async def get_status() -> Dict[str, Any]:
 @web_app.get("/api/logs/stream")
 async def log_stream() -> StreamingResponse:
     async def events():
-        while True:
-            lines = runner.drain_logs(timeout=0.8)
-            for line in lines:
-                yield f"data: {json.dumps({'line': line}, ensure_ascii=False)}\n\n"
-            st = runner.status()
-            yield f"data: {json.dumps({'status': st}, ensure_ascii=False)}\n\n"
-            await asyncio.sleep(0.4)
+        _inc_sse_clients()
+        try:
+            while True:
+                lines = runner.drain_logs(timeout=0.8)
+                for line in lines:
+                    yield f"data: {json.dumps({'line': line}, ensure_ascii=False)}\n\n"
+                st = runner.status()
+                yield f"data: {json.dumps({'status': st}, ensure_ascii=False)}\n\n"
+                await asyncio.sleep(0.4)
+        finally:
+            _dec_sse_clients()
 
     return StreamingResponse(
         events(),
@@ -255,6 +301,14 @@ async def log_stream() -> StreamingResponse:
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@web_app.post("/api/shutdown")
+async def api_shutdown() -> Dict[str, str]:
+    """前端页面关闭时调用，触发程序退出。"""
+    if _shutdown_event is not None:
+        _shutdown_event.set()
+    return {"ok": "shutting_down"}
 
 
 @web_app.get("/api/config/files")
@@ -395,9 +449,14 @@ web_app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 def run_web_server(*, host: str = "0.0.0.0", port: int = 8765) -> None:
     import uvicorn
+    import signal
 
     from web.network import browser_open_url, list_access_urls, resolve_bind_host
 
+    global _shutdown_event
+    _shutdown_event = asyncio.Event()
+
+    # 绑定到 0.0.0.0 自动使局域网可访问
     bind_host = resolve_bind_host(host)
     urls = list_access_urls(port, bind_host=bind_host)
     local_url = browser_open_url(port)
@@ -413,7 +472,7 @@ def run_web_server(*, host: str = "0.0.0.0", port: int = 8765) -> None:
     elif bind_host == "127.0.0.1":
         print("当前仅本机可访问（web_host=127.0.0.1）")
         print("若需局域网访问，请在配置中将 web_host 改为 0.0.0.0")
-    print("（与桌面程序功能相同，关闭本窗口即停止服务）")
+    print("（关闭浏览器窗口或所有标签页后，本程序将自动退出）")
     if bind_host == "0.0.0.0":
         print(f"提示: 若局域网无法访问，请在防火墙中放行 TCP 端口 {port}")
     print("=" * 50)
@@ -421,4 +480,26 @@ def run_web_server(*, host: str = "0.0.0.0", port: int = 8765) -> None:
         webbrowser.open(local_url)
     except Exception:
         pass
-    uvicorn.run(web_app, host=bind_host, port=port, log_level="warning")
+
+    config = uvicorn.Config(web_app, host=bind_host, port=port, log_level="warning")
+    server = uvicorn.Server(config)
+
+    async def _wait_shutdown() -> None:
+        await _shutdown_event.wait()
+        print("\n检测到浏览器已关闭，正在停止服务…")
+        server.should_exit = True
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(
+            asyncio.gather(
+                server.serve(),
+                _wait_shutdown(),
+            )
+        )
+    except KeyboardInterrupt:
+        pass
+    finally:
+        loop.close()
+        _shutdown_event = None

@@ -606,17 +606,15 @@ async function startSummarize() {
 }
 
 async function startBoth() {
-  goToLogPanel();
-  const workers = +document.getElementById("dl-concurrency")?.value || undefined;
-  await api(`/api/tasks/download${workers ? "?workers=" + workers : ""}`, { method: "POST" });
-  const afterDl = await waitForTaskIdle();
-  if (afterDl.status.includes("失败")) {
-    alert("下载失败，已跳过汇总");
-    return;
-  }
   const payload = await collectSummarizeOptions({ skipConfirm: true });
   if (payload === null) return;
-  await api("/api/tasks/summarize", { method: "POST", body: JSON.stringify(payload) });
+  goToLogPanel();
+  const workers = +document.getElementById("dl-concurrency")?.value || undefined;
+  const body = { ...payload };
+  await api(
+    `/api/tasks/both${workers ? "?workers=" + workers : ""}`,
+    { method: "POST", body: JSON.stringify(body) }
+  );
 }
 
 async function loadConfigFileList() {
@@ -651,6 +649,13 @@ async function init() {
   state.taskRunning = st.running;
   setStatus(st.status, st.detail);
   updateTaskButtons();
+
+  // 页面关闭/刷新时通知后端退出程序，释放 InstanceLock
+  window.addEventListener("beforeunload", function () {
+    // 使用 sendBeacon 确保请求在页面卸载时发出
+    const data = JSON.stringify({});
+    navigator.sendBeacon("/api/shutdown", data);
+  });
 }
 
 init().catch((err) => {

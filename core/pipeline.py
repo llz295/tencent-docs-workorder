@@ -7,10 +7,7 @@ import io
 import sys
 from dataclasses import replace
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple, TYPE_CHECKING
-
-if TYPE_CHECKING:
-    import tkinter as tk
+from typing import Callable, List, Optional, Tuple
 
 from summarize.date_filter import DateRange
 
@@ -25,6 +22,46 @@ LogFn = Callable[[str], None]
 
 def _default_log(msg: str) -> None:
     print(msg, flush=True)
+
+
+def _pick_date_ranges_console() -> Optional[List[DateRange]]:
+    """控制台交互式选择时间段（替代被移除的 tkinter 日历弹窗）。"""
+    from datetime import date
+
+    ranges: List[DateRange] = []
+    print("\n" + "=" * 40)
+    print("时间段选择（闭区间）")
+    print("每行输入一个时间段: 开始日期 结束日期")
+    print("例如: 2025-01-01 2025-01-31")
+    print("空行结束输入 / 取消")
+    print("=" * 40)
+
+    while True:
+        try:
+            line = input(f"时间段 {len(ranges)+1} (或回车结束): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            line = ""
+        if not line:
+            break
+        parts = line.split()
+        if len(parts) != 2:
+            print("[!] 格式错误，请输入: 开始日期 结束日期")
+            continue
+        try:
+            start = date.fromisoformat(parts[0])
+            end = date.fromisoformat(parts[1])
+            if start > end:
+                print("[!] 开始日期不能晚于结束日期")
+                continue
+            ranges.append((start, end))
+            print(f"  -> 已添加: {start} ~ {end}")
+        except ValueError:
+            print("[!] 日期格式错误，请使用 YYYY-MM-DD 格式")
+
+    if not ranges:
+        print("未选择任何时间段，使用全量数据")
+        return []
+    return ranges
 
 
 @contextlib.contextmanager
@@ -98,11 +135,8 @@ def prepare_summarize(
     sheet_name: Optional[str] = None,
     log: LogFn = _default_log,
     status_fn: Optional[StatusFn] = None,
-    tk_parent: Optional["tk.Misc"] = None,
 ) -> Optional[Tuple[SummarizeConfig, List[DateRange]]]:
-    """主线程：确认弹窗、选 sheet、选时间段（含 Tk 交互）。"""
-    from summarize.date_range_picker import pick_date_ranges
-    from summarize.prompt_dialog import confirm_summarize
+    """主线程：确认、选 sheet、选时间段（控制台交互）。"""
     from summarize.sheet_selector import find_sample_xlsx, resolve_sheet_name
 
     apply_app_config()
@@ -116,8 +150,12 @@ def prepare_summarize(
     _emit_status(status_fn, "录音师工单汇总 — 准备中", log)
 
     if not skip_prompt and config.prompt_before_summarize:
-        _emit_status(status_fn, "等待确认是否汇总…", log)
-        if not confirm_summarize(enabled=True, parent=tk_parent):
+        _emit_status(status_fn, "确认是否汇总…", log)
+        try:
+            resp = input("\n是否开始汇总? (y/N): ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            resp = "n"
+        if resp not in ("y", "yes"):
             log("[i] 已跳过汇总")
             return None
 
@@ -134,7 +172,6 @@ def prepare_summarize(
         config_sheet=config.sheet_name,
         cli_sheet=sheet_name,
         prompt_interactive=interactive_sheet,
-        parent=tk_parent,
     )
     if interactive_sheet and resolved is None:
         log("[i] 已取消工作表选择")
@@ -144,7 +181,7 @@ def prepare_summarize(
     ranges: List[DateRange] = []
     if config.prompt_for_date_ranges and not skip_date_prompt:
         _emit_status(status_fn, "请选择时间段（日历）…", log)
-        picked = pick_date_ranges(parent=tk_parent)
+        picked = _pick_date_ranges_console()
         if picked is None:
             log("[i] 已取消时间段选择")
             return None
@@ -189,7 +226,6 @@ def run_summarize(
     sheet_name: Optional[str] = None,
     log: LogFn = _default_log,
     status_fn: Optional[StatusFn] = None,
-    show_notify_dialog: bool = True,
 ) -> Optional[Path]:
     apply_app_config()
     with capture_stdout(log):
@@ -213,10 +249,8 @@ def run_summarize(
             config, ranges, log=log, status_fn=status_fn
         )
 
-        if output_path is not None and show_notify_dialog:
-            from summarize.notify import notify_summarize_saved
-
-            notify_summarize_saved(output_path)
+        if output_path is not None:
+            print(f"\n汇总完成，已保存: {output_path}")
         return output_path
 
 
