@@ -536,8 +536,8 @@ async function collectSummarizeOptions({ skipConfirm = false } = {}) {
       if (!ok) return null;
       sheetName = sel.value;
     } else {
-      sheetName = prompt("请输入工作表名称") || null;
-      if (!sheetName) return null;
+      // 未读取到sheet名（可能文件被占用或格式问题），直接使用默认第一个工作表
+      sheetName = null;
     }
   }
 
@@ -606,15 +606,33 @@ async function startSummarize() {
 }
 
 async function startBoth() {
+  goToLogPanel();
+  // 第一步：先启动下载（不弹窗，必须下载完成后再选sheet）
+  const workers = +document.getElementById("dl-concurrency")?.value || undefined;
+  await api(`/api/tasks/download${workers ? "?workers=" + workers : ""}`, { method: "POST" });
+
+  // 第二步：等待下载完成
+  let finalStatus;
+  try {
+    finalStatus = await waitForTaskIdle();
+  } catch (e) {
+    alert(e.message);
+    return;
+  }
+
+  // 第三步：检查下载是否成功，失败则alert返回（如登录失效）
+  if (finalStatus && finalStatus.status &&
+      (finalStatus.status.includes("失败") || finalStatus.status.includes("错误"))) {
+    alert("下载失败，请检查登录状态后重试");
+    return;
+  }
+
+  // 第四步：下载成功后，根据已下载的Excel文件弹窗选择sheetname、时间段等
   const payload = await collectSummarizeOptions({ skipConfirm: true });
   if (payload === null) return;
-  goToLogPanel();
-  const workers = +document.getElementById("dl-concurrency")?.value || undefined;
-  const body = { ...payload };
-  await api(
-    `/api/tasks/both${workers ? "?workers=" + workers : ""}`,
-    { method: "POST", body: JSON.stringify(body) }
-  );
+
+  // 第五步：启动汇总
+  await api("/api/tasks/summarize", { method: "POST", body: JSON.stringify(payload) });
 }
 
 async function loadConfigFileList() {
@@ -650,12 +668,9 @@ async function init() {
   setStatus(st.status, st.detail);
   updateTaskButtons();
 
-  // 页面关闭/刷新时通知后端退出程序，释放 InstanceLock
-  window.addEventListener("beforeunload", function () {
-    // 使用 sendBeacon 确保请求在页面卸载时发出
-    const data = JSON.stringify({});
-    navigator.sendBeacon("/api/shutdown", data);
-  });
+  // 页面关闭时的退出逻辑由 SSE 客户端断开自动触发（3秒优雅关闭），
+  // 因此不再需要 beforeunload 手动发 shutdown 信号，
+  // 避免页面刷新时因提前触发 shutdown 导致后续请求失败（Failed to fetch）。
 }
 
 init().catch((err) => {

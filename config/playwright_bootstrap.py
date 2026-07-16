@@ -45,16 +45,18 @@ def chromium_executable(browsers_dir: Path | None = None) -> Path | None:
     root = browsers_dir or _browsers_dir()
     revision = expected_chromium_revision()
     if revision:
-        exe = root / f"chromium-{revision}" / "chrome-win64" / "chrome.exe"
-        if exe.is_file():
-            return exe
+        for sub_dir in ("chrome-win64", "chrome-win"):
+            exe = root / f"chromium-{revision}" / sub_dir / "chrome.exe"
+            if exe.is_file():
+                return exe
     if not root.is_dir():
         return None
     for child in sorted(root.iterdir(), reverse=True):
         if child.is_dir() and child.name.startswith("chromium-") and "headless_shell" not in child.name:
-            exe = child / "chrome-win64" / "chrome.exe"
-            if exe.is_file():
-                return exe
+            for sub_dir in ("chrome-win64", "chrome-win"):
+                exe = child / sub_dir / "chrome.exe"
+                if exe.is_file():
+                    return exe
     return None
 
 

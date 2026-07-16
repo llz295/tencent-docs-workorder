@@ -1,6 +1,7 @@
-# Nuitka 极致轻量化打包 · 完整分步教程
+# Nuitka 打包 · 完整分步教程
 
-方案一：Nuitka 编译 + UPX 二次压缩，相比 PyInstaller 体积更小、运行时内存更低。
+用 Nuitka 把项目编译成 Windows 原生可执行程序，`--standalone` 输出一个自带运行时的文件夹，
+连同 Chromium 一起分发，接收方无需安装 Python。
 
 ---
 
@@ -16,13 +17,13 @@
 
 > Python 3.13/3.14 仅实验性支持，编译慢且可能失败，**强烈建议使用 3.11**。
 
-### 1.1 克隆项目
+### 1.1 克隆项目并建虚拟环境
 
 ```powershell
 git clone <仓库地址>
-cd tencent_docs_pom
-python -m venv .venv
-.venv\Scripts\activate
+cd yuandaima
+python -m venv .venv311
+.venv311\Scripts\activate
 ```
 
 ### 1.2 安装依赖
@@ -31,157 +32,154 @@ python -m venv .venv
 pip install -r requirements-build.txt
 ```
 
-### 1.3 放置 UPX
+### 1.3 准备浏览器内核
 
-将 `upx.exe` 放在项目根目录（与 `run.py` 同级）。  
-脚本也会查找 `tools/upx.exe` 或系统 PATH 中的 `upx`。
+仓库不含 `ms-playwright/`（太大）。首次打包前先下载 Chromium 到项目内：
+
+```powershell
+$env:PLAYWRIGHT_BROWSERS_PATH = "$PWD\ms-playwright"
+python -m playwright install chromium --no-shell
+```
+
+打包脚本会把该目录里的 Chromium 拷进产物；若不存在则跳过，程序首次运行时会联网自动下载。
 
 ### 1.4 准备 vendor/app.py
 
-```powershell
-python build\prepare_vendor.py
-```
-
-从上级 `app.py` 复制汇总逻辑到 `vendor/app.py`（GitHub 仓库已含则可跳过）。
+`vendor/app.py` 是汇总/计税逻辑。仓库已包含则无需处理；缺失时把上级目录的 `app.py`
+复制到 `vendor/app.py` 即可（`do_build.py` 也会自动尝试复制）。
 
 ---
 
 ## 二、一键打包
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File build\nuitka_build.ps1
+python build\do_build.py
 ```
 
-脚本自动执行 8 步：
+脚本自动执行 7 步：
 
 | 步骤 | 内容 |
 |------|------|
-| 1/8 | 安装 pip 依赖 + Nuitka |
-| 2/8 | 准备 vendor/app.py |
-| 3/8 | `playwright install chromium --no-shell` |
-| 4/8 | Nuitka `--standalone` 编译 `run.py` |
-| 5/8 | 整理到 `dist/WorkOrderAutomation/` |
-| 6/8 | 复制 `data/` 配置、Chromium 到 `ms-playwright/` |
-| 7/8 | UPX `--best --lzma` 压缩 exe/dll |
-| 8/8 | 生成 `releases/*.zip` |
+| 0/7 | 清理旧的构建产物 |
+| 1/7 | 准备 `vendor/app.py` |
+| 2/7 | Nuitka `--standalone` 编译 `run.py`（多核并行） |
+| 3/7 | 定位编译输出目录 |
+| 4/7 | 整理到 `dist/WorkOrderAutomation/` 并复制 `data/` 配置 |
+| 5/7 | 复制 Chromium（含 ffmpeg/winldd）到 `ms-playwright/` |
+| 6/7 | 复制 VC++ 运行时 DLL |
+| 7/7 | 生成 `releases/WorkOrderAutomation-Windows.zip` |
 
-### Lite 版（不含浏览器）
-
-```powershell
-powershell -ExecutionPolicy Bypass -File build\nuitka_build.ps1 -Lite
-```
-
-首次运行程序时会联网下载 Chromium（约 400MB）。
-
-### 跳过 UPX
-
-```powershell
-powershell -ExecutionPolicy Bypass -File build\nuitka_build.ps1 -SkipUpx
-```
+编译耗时约 **10~30 分钟**（取决于 CPU），首次更慢。
 
 ---
 
 ## 三、产物说明
 
-解压 `releases/WorkOrderAutomation-Nuitka-Windows.zip` 后：
+解压 `releases/WorkOrderAutomation-Windows.zip` 后：
 
 ```
 WorkOrderAutomation/
-├── WorkOrderAutomation.exe   # 主程序（UPX 压缩后）
-├── *.dll                     # 运行时依赖
-├── data/                     # 配置文件（可编辑）
+├── WorkOrderAutomation.exe   # 主程序（启动器，约 20MB 属正常）
+├── *.dll / *.pyd             # 运行时依赖（python311.dll 等）
+├── data/                     # 配置文件（可编辑，不含 session.json）
 ├── ms-playwright/            # Chromium（标准版）
 ├── web/static/               # 网页版前端
-└── README-win.txt
+└── vendor/                   # 汇总/计税逻辑
 ```
 
-**使用：** 双击 `WorkOrderAutomation.exe`，或命令行：
+> **为什么 exe 只有 20 多 MB？** `--standalone` 模式下 exe 只是启动器，真正的代码和依赖以
+> `python311.dll`、各种 `.pyd` 独立文件放在同一文件夹。**必须整个文件夹一起分发**，
+> 不能只发 exe。想要单文件用 `--onefile`，但本项目带 400MB Chromium 不适合（启动慢）。
+
+**使用：** 双击 `WorkOrderAutomation.exe` 启动网页版，或命令行：
 
 ```powershell
-WorkOrderAutomation.exe --web
-WorkOrderAutomation.exe download
+WorkOrderAutomation.exe            # 网页版（默认）
+WorkOrderAutomation.exe download   # 仅下载
+WorkOrderAutomation.exe summarize  # 仅汇总
+WorkOrderAutomation.exe all        # 下载并汇总
 ```
 
 ---
 
-## 四、Nuitka 参数说明（build/nuitka_build.ps1）
+## 四、关键 Nuitka 参数（build/do_build.py）
 
 | 参数 | 作用 |
 |------|------|
 | `--standalone` | 独立目录分发，不依赖本机 Python |
 | `--mingw64` | 使用 MinGW 编译，生成原生二进制 |
-| `--lto=yes` | 链接时优化，减小体积 |
-| `--enable-plugin=tk-inter` | 打包 Tkinter/CustomTkinter |
-| `--windows-console-mode=disable` | GUI 模式无黑窗口 |
+| `--jobs=<CPU核数>` | 多核并行编译，加速 |
+| `--windows-console-mode=force` | **保留控制台**：显示访问地址，崩溃时能看到报错 |
+| `--include-package=playwright` | 打包 Playwright；Nuitka 插件会自动带上 driver 与浏览器信息 |
+| `--include-package=fastapi/uvicorn/starlette/flask` | Web 服务依赖 |
+| `--include-package=pandas/openpyxl` | 数据处理 |
 | `--include-module=app` | 编入 vendor 汇总逻辑 |
-| `--include-data-dir` | 打包 data/、web/static/ |
-| `--nofollow-import-to=...` | 剔除 matplotlib 等无用库 |
+| `--include-data-dir` | 打包 `data/`、`web/static/`、`vendor/` |
+| `--nofollow-import-to=...` | 剔除 matplotlib/torch 等无用库，减小体积 |
 
 ---
 
-## 五、UPX 压缩
+## 五、⚠️ 不要使用 UPX
 
-`build/apply_upx.ps1` 对 `dist/` 内 exe/dll 执行：
+早期版本用 `upx --best --lzma` 二次压缩 exe/dll，会导致：
 
-```powershell
-upx.exe --best --lzma --force <文件>
-```
+- 压缩 `python311.dll` / `.pyd` → **程序启动即崩溃**；
+- 压缩 Chromium 的 `chrome.exe` 及其 DLL → **浏览器无法启动**；
+- 更容易被杀毒软件误报。
 
-- **跳过：** `ms-playwright/` 内浏览器文件
-- **跳过：** `python*.dll`、`vcruntime` 等系统运行时（避免兼容问题）
-- 主程序 `WorkOrderAutomation.exe` 通常可压缩 **50%+**
+配合 `--windows-console-mode=disable` 时崩溃连报错都看不到，表现为「双击没反应 / 无法运行」。
+因此当前打包流程**已彻底移除 UPX**。根目录保留的 `upx.exe` 仅作备用，不参与打包。
 
 ---
 
 ## 六、发布到 GitHub Releases
 
-1. 本地打包完成后，在 GitHub 创建 Release（如 `v1.0.0`）
-2. 上传 `releases/WorkOrderAutomation-Nuitka-Windows.zip`
-3. README 中 Releases 链接指向该 zip
+源码可用仓库自带脚本推送（需先安装 Git 并配置身份）：
 
-**不要** 把 `releases/`、`dist/`、`ms-playwright/` 提交进 Git（已在 `.gitignore`）。
+```powershell
+powershell -ExecutionPolicy Bypass -File build\publish_github.ps1 -RepoUrl "https://github.com/<用户名>/<仓库>.git"
+```
 
----
+发布二进制：
 
-## 七、与 PyInstaller 对比
+1. 在 GitHub 创建 Release（如 `v1.0.0`）；
+2. 上传 `releases/WorkOrderAutomation-Windows.zip`；
+3. README 的 Releases 链接指向该 zip。
 
-| 对比项 | Nuitka（本方案） | PyInstaller |
-|--------|------------------|-------------|
-| 原理 | Python → C → 原生二进制 | 打包字节码 + 引导器 |
-| exe 体积 | 更小（+ UPX 更小） | 较大 |
-| 运行内存 | 更低 | 较高 |
-| 编译时间 | 较长（5~20 分钟） | 较短 |
-| 脚本 | `build/nuitka_build.ps1` | `build/build.ps1` |
+**不要**把 `releases/`、`dist/`、`ms-playwright/`、`data/session.json` 提交进 Git（已在 `.gitignore`）。
 
 ---
 
-## 八、故障排查
+## 七、故障排查
 
 | 现象 | 处理 |
 |------|------|
-| Nuitka 找不到 MinGW | 加 `--assume-yes-for-downloads`，或手动安装 MinGW64 |
-| 汇总报错 No module named 'app' | 运行 `python build/prepare_vendor.py` |
-| 打包后 Playwright 找不到浏览器 | 确认 `ms-playwright/` 与 exe 同级 |
-| UPX 后程序无法启动 | 使用 `-SkipUpx` 重新打包 |
-| exe 被杀毒误报 | Nuitka+UPX 可能被误报，添加白名单或代码签名 |
+| 双击 exe 没反应 / 一闪而过 | 确认用的是当前 `do_build.py`（控制台保留），在控制台看报错 |
+| Nuitka 找不到 MinGW | 加 `--assume-yes-for-downloads`（脚本已含），或手动安装 MinGW64 |
+| 汇总报错 No module named 'app' | 确认 `vendor/app.py` 存在 |
+| 打包后 Playwright 找不到浏览器 | 确认 `ms-playwright/` 与 exe 同级、含 `chromium-*` |
+| exe 被杀毒误报 | 添加白名单或对 exe 做代码签名 |
 
 ---
 
-## 九、手动分步（等价于脚本）
+## 八、手动分步（等价于脚本）
 
 ```powershell
 pip install -r requirements-build.txt
-python build\prepare_vendor.py
-playwright install chromium --no-shell
 
-$env:PYTHONPATH = "vendor;."
-python -m nuitka --standalone --mingw64 --enable-plugin=tk-inter `
-  --windows-console-mode=disable --include-module=app `
-  --include-data-dir=data=data --include-data-dir=web/static=web/static `
+$env:PLAYWRIGHT_BROWSERS_PATH = "$PWD\ms-playwright"
+python -m playwright install chromium --no-shell
+
+python -m nuitka --standalone --mingw64 --windows-console-mode=force `
+  --include-package=playwright --include-package=pandas --include-package=openpyxl `
+  --include-package=fastapi --include-package=uvicorn --include-package=starlette --include-package=flask `
+  --include-package=config --include-package=auth --include-package=pages `
+  --include-package=services --include-package=core --include-package=summarize `
+  --include-package=web --include-package=vendor --include-module=app `
+  --include-data-dir=data=data --include-data-dir=web/static=web/static --include-data-dir=vendor=vendor `
   --output-dir=build/nuitka-out --output-filename=WorkOrderAutomation.exe `
   run.py
 
-# 复制 run.dist 到 dist/WorkOrderAutomation
-python build/stage_browsers.py dist/WorkOrderAutomation
-powershell -File build/apply_upx.ps1 -TargetDir dist/WorkOrderAutomation
+# 然后把 build/nuitka-out/run.dist 拷到 dist/WorkOrderAutomation，
+# 并复制 data/、ms-playwright/ 到同级目录。直接用 do_build.py 会自动完成这些。
 ```

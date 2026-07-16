@@ -1,6 +1,7 @@
 """选择汇总工作表 — 纯业务逻辑（无 GUI）。"""
 from __future__ import annotations
 
+from io import BytesIO
 import functools
 import sys
 from pathlib import Path
@@ -42,13 +43,51 @@ def find_sample_xlsx(
     return min(files, key=_index_sort_key)
 
 
-def list_sheet_names(file_path: Path) -> List[str]:
-    """以样例 xlsx 读取 sheet 名列表。"""
+def list_sheet_names(file_path: str | Path) -> List[str]:
+    """以样例 xlsx 读取 sheet 名列表。
+
+    直接解析 xlsx（zip 包）中的 xl/workbook.xml 来获取 sheet 名称，
+    完全绕过 openpyxl 样式解析，避免样式异常导致返回空列表。
+    """
+    import zipfile
+    import xml.etree.ElementTree as ET
+
     try:
+        with zipfile.ZipFile(str(file_path), "r") as z:
+            with z.open("xl/workbook.xml") as f:
+                tree = ET.parse(f)
+        root = tree.getroot()
+        # 处理命名空间
+        ns = {"s": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+        sheets = root.findall(".//s:sheet", ns)
+        return [s.attrib.get("name", "") for s in sheets if s.attrib.get("name")]
+    except Exception:
+        pass
+
+    try:
+        # 回退：使用 openpyxl 只读模式
         import openpyxl
 
         wb = openpyxl.load_workbook(file_path, read_only=True)
-        return wb.sheetnames
+        names = wb.sheetnames
+        wb.close()
+        return names
+    except Exception:
+        pass
+
+    try:
+        # 回退：修复样式后再读取
+        from vendor.app import fix_excel_file_style
+
+        with open(file_path, "rb") as f:
+            content = BytesIO(f.read())
+        fixed = fix_excel_file_style(content)
+        from openpyxl import load_workbook as lw
+
+        wb = lw(fixed, read_only=True)
+        names = wb.sheetnames
+        wb.close()
+        return names
     except Exception:
         return []
 

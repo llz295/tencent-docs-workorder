@@ -1,50 +1,39 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.pyo
-.Python
-*.egg-info/
-.eggs/
-dist/
-releases/
-build/nuitka-out/
-build/temporary*/
-build/**/*.build/
-build/**/*.dist/
-*.spec.bak
-
-# 运行产物
-app.log
-data/session.json
-data/session.json.bak
-data/instance.lock
-*.log
-
-# 浏览器（体积大，打包时自动复制）
-ms-playwright/
-
-# PyInstaller 缓存
-build/tencent_docs/
-nuitka-crash-report.xml
-build/nuitka_build.log
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# OS
-Thumbs.db
-Desktop.ini
-.DS_Store
-
 # 虚拟环境
-.venv/
-.venv*/
+.venv311/
 venv/
 env/
 
-# 保留 upx.exe（项目根目录）
-# !upx.exe
+# 缓存、日志
+*.log
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 系统/IDE文件
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# UPX、MinGW缓存
+%LOCALAPPDATA%/Nuitka/
+
+# 构建产物
+build/nuitka-out/
+build/nuitka-out2/
+build/tencent_docs/
+dist/
+releases/
+
+# 运行时数据（不提交）
+data/session.json
+data/session.json.bak
+data/instance.lock
+
+# 浏览器内核（不提交到 git，太大）
+ms-playwright/
+
+# 运行时文件
+app.log

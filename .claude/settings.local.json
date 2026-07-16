@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell -Command \"& 'c:\\\\Users\\\\Administrator\\\\Desktop\\\\自动化办公\\\\自动化\\\\tencent_docs_pom\\\\.venv311\\\\Scripts\\\\python.exe' -m nuitka --version\")"
+    ]
+  }
+}

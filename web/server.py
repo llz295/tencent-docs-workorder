@@ -387,21 +387,53 @@ async def save_config_api(name: str, body: ConfigSaveRequest) -> Dict[str, str]:
 
 @web_app.get("/api/summarize/prep")
 async def summarize_prep() -> Dict[str, Any]:
-    from config.settings import DOWNLOAD_DIR
+    from summarize.aggregator import list_downloaded_xlsx
     from summarize.sheet_selector import find_sample_xlsx, list_sheet_names
+    import config.settings as settings_module
 
     apply_app_config()
     cfg = SummarizeConfig.load()
+
+    # 必须在 apply_app_config() 之后读取 DOWNLOAD_DIR，才能获取用户配置的实际路径
+    search_dir = Path(settings_module.DOWNLOAD_DIR)
+    runner._log(f"[汇总准备] 搜索目录: {search_dir}")
+
+    # 使用 find_sample_xlsx 根据关键字查找样例文件
+    # 关键字作用：在下载目录中优先选择文件名包含该关键词的 xlsx 来读取子表名
     sample = find_sample_xlsx(
-        Path(DOWNLOAD_DIR),
+        search_dir,
         prefer_name_contains=cfg.sample_file_keyword,
         output_prefix=cfg.output_filename_prefix,
     )
+    if sample:
+        runner._log(f"[汇总准备] 样例文件: {sample.name}")
+    else:
+        runner._log(f"[汇总准备] 目录是否存在: {search_dir.is_dir()}")
+
     sheets: List[str] = []
     sample_name = None
+
+    # 优先使用已下载的文件获取 sheet 名
     if sample and sample.is_file():
         sheets = list_sheet_names(sample)
         sample_name = sample.name
+        runner._log(f"[汇总准备] 使用已下载文件: {sample_name}, sheet 名: {sheets}")
+        if not sheets:
+            runner._log(f"[汇总准备] 警告: 文件 {sample_name} 的 sheet 名为空，可能文件格式异常")
+    else:
+        # 没有已下载文件时，使用探针表下载并读取 sheet 名
+        runner._log("[汇总准备] 未找到已下载文件，尝试使用探针表获取工作表名")
+        try:
+            probe_sheets = await _probe_sheet_names_async()
+            if probe_sheets:
+                sheets = probe_sheets
+                sample_name = "探针表"
+                runner._log(f"[汇总准备] 探针表 sheet 名: {sheets}")
+            else:
+                runner._log("[汇总准备] 探针表获取 sheet 名失败")
+        except Exception as exc:
+            runner._log(f"[汇总准备] 探针表异常: {exc}")
+
     return {
         "config": {
             "prompt_before_summarize": cfg.prompt_before_summarize,
@@ -412,6 +444,62 @@ async def summarize_prep() -> Dict[str, Any]:
         "sample_file": sample_name,
         "sheets": sheets,
     }
+
+
+async def _probe_sheet_names_async() -> List[str]:
+    """使用 Playwright 下载探针表并读取其 sheet 名列表。"""
+    import tempfile
+    import shutil
+    from pages.sheet_page import SheetPage
+    from config.settings import PROBE_SHEET_URL, STORAGE_STATE_PATH
+    from playwright.async_api import async_playwright
+
+    probe_url = PROBE_SHEET_URL.strip()
+    if not probe_url:
+        return []
+
+    tmp_dir = tempfile.mkdtemp(prefix="tencent_probe_sheets_")
+    try:
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=True)
+            context_kwargs = {"accept_downloads": True}
+            if STORAGE_STATE_PATH and Path(STORAGE_STATE_PATH).is_file():
+                context_kwargs["storage_state"] = str(STORAGE_STATE_PATH)
+            context = await browser.new_context(**context_kwargs)
+            page = await context.new_page()
+            try:
+                sheet_page = SheetPage(page)
+                ok = await sheet_page.probe_download(
+                    probe_url, tmp_dir, timeout_sec=20, label="获取工作表名"
+                )
+                if ok:
+                    probe_files = sorted(Path(tmp_dir).glob("*.xlsx"))
+                    if probe_files:
+                        from summarize.sheet_selector import list_sheet_names
+                        names = list_sheet_names(probe_files[0])
+                        return names
+                return []
+            except Exception as exc:
+                print(f"探针读取 sheet 名异常: {exc}")
+                return []
+            finally:
+                try:
+                    await page.close()
+                except Exception:
+                    pass
+                try:
+                    await context.close()
+                except Exception:
+                    pass
+                try:
+                    await browser.close()
+                except Exception:
+                    pass
+    except Exception as exc:
+        print(f"Playwright 启动失败: {exc}")
+        return []
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 @web_app.post("/api/tasks/download")
@@ -462,20 +550,27 @@ def run_web_server(*, host: str = "0.0.0.0", port: int = 8765) -> None:
     local_url = browser_open_url(port)
     lan_urls = [u for u in urls if "127.0.0.1" not in u and "localhost" not in u]
 
-    print("=" * 50)
-    print("网页版已启动")
-    print(f"本机访问: {local_url}")
+    # 同时将启动日志推送到 SSE 日志流，让网页端也能看到
+    startup_lines = [
+        "=" * 50,
+        "网页版已启动",
+        f"本机访问: {local_url}",
+    ]
     if bind_host == "0.0.0.0" and lan_urls:
-        print("局域网访问（其他电脑浏览器打开以下地址）:")
+        startup_lines.append("局域网访问（其他电脑浏览器打开以下地址）:")
         for u in lan_urls:
-            print(f"  {u}")
+            startup_lines.append(f"  {u}")
     elif bind_host == "127.0.0.1":
-        print("当前仅本机可访问（web_host=127.0.0.1）")
-        print("若需局域网访问，请在配置中将 web_host 改为 0.0.0.0")
-    print("（关闭浏览器窗口或所有标签页后，本程序将自动退出）")
+        startup_lines.append("当前仅本机可访问（web_host=127.0.0.1）")
+        startup_lines.append("若需局域网访问，请在配置中将 web_host 改为 0.0.0.0")
+    startup_lines.append("（关闭浏览器窗口或所有标签页后，本程序将自动退出）")
     if bind_host == "0.0.0.0":
-        print(f"提示: 若局域网无法访问，请在防火墙中放行 TCP 端口 {port}")
-    print("=" * 50)
+        startup_lines.append(f"提示: 若局域网无法访问，请在防火墙中放行 TCP 端口 {port}")
+    startup_lines.append("=" * 50)
+
+    for line in startup_lines:
+        print(line)
+        runner._log(line)
     try:
         webbrowser.open(local_url)
     except Exception:
